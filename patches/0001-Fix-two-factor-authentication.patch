@@ -1,12 +1,14 @@
 Fix two-factor authentication
 
 Discord rejects every 2FA code unless the login and the 2FA request carry an
-X-Fingerprint obtained from /auth/fingerprint; a rejected attempt can also sign
-the account out everywhere. This is the cause of purple-discord issues #477 and
-#489, and the same fix Discord Lite made in dosdude1/discord-lite@fde55a8.
+X-Fingerprint; a rejected attempt can also sign the account out everywhere.
+This is the cause of purple-discord issues #477 and #489, and the same fix
+Discord Lite made in dosdude1/discord-lite@fde55a8.
 
-- Fetch /auth/fingerprint before the password login and send it (with a
-  login Referer) on the unauthenticated requests.
+- Before the password login, get a fingerprint from GET /experiments (falling
+  back to POST /auth/fingerprint) and send it, with a login Referer, on the
+  unauthenticated requests. Discord issues only 3 valid fingerprints per IP
+  every 2 minutes (https://docs.discord.food/topics/experiments).
 - Send the same login and 2FA bodies as the official client (undelete,
   login_source, gift_code_sku_id), and pass the login_instance_id from the
   login response on to the 2FA request.
@@ -18,7 +20,7 @@ the account out everywhere. This is the cause of purple-discord issues #477 and
 - Free fingerprint, mfa_ticket and login_instance_id on close.
 
 diff --git a/libdiscord.c b/libdiscord.c
-index 31fc76c..0a489ac 100644
+index 31fc76c..1953ead 100644
 --- a/libdiscord.c
 +++ b/libdiscord.c
 @@ -393,6 +393,8 @@ typedef struct {
@@ -96,7 +98,7 @@ index 31fc76c..0a489ac 100644
  				NULL, FALSE, FALSE, "",
  				_("_Login"), G_CALLBACK(discord_mfa_text_entry),
  				_("_Cancel"), G_CALLBACK(discord_mfa_cancel),
-@@ -6377,11 +6405,60 @@ discord_login_response(DiscordAccount *da, JsonNode *node, gpointer user_data)
+@@ -6377,11 +6405,71 @@ discord_login_response(DiscordAccount *da, JsonNode *node, gpointer user_data)
  				}
  			}
  		}
@@ -133,6 +135,8 @@ index 31fc76c..0a489ac 100644
 +static void
 +discord_got_login_fingerprint(DiscordAccount *da, JsonNode *node, gpointer user_data)
 +{
++	gboolean from_experiments = GPOINTER_TO_INT(user_data);
++
 +	if (node == NULL) {
 +		/* The connection already failed or went away */
 +		return;
@@ -147,8 +151,17 @@ index 31fc76c..0a489ac 100644
 +		}
 +	}
 +
++	if (da->fingerprint == NULL && from_experiments) {
++		/* Older way of getting one */
++		purple_debug_warning("discord", "No fingerprint from /experiments, trying /auth/fingerprint\n");
++		discord_fetch_url(da, "https://" DISCORD_API_SERVER "/api/v9/auth/fingerprint", "{}", discord_got_login_fingerprint, GINT_TO_POINTER(FALSE));
++		return;
++	}
++
 +	if (da->fingerprint == NULL) {
 +		purple_debug_warning("discord", "No login fingerprint; two-factor authentication may fail\n");
++	} else {
++		purple_debug_info("discord", "Got login fingerprint\n");
 +	}
 +
 +	discord_send_login(da);
@@ -157,7 +170,7 @@ index 31fc76c..0a489ac 100644
  void
  discord_login(PurpleAccount *account)
  {
-@@ -6446,17 +6523,8 @@ discord_login(PurpleAccount *account)
+@@ -6446,17 +6534,10 @@ discord_login(PurpleAccount *account)
  		discord_start_socket(da);
  
  	} else if (account_password && *account_password) {
@@ -172,12 +185,14 @@ index 31fc76c..0a489ac 100644
 -
 -		g_free(str);
 -		json_object_unref(data);
-+		/* Without a fingerprint Discord rejects every 2FA code (and may sign the account out everywhere) */
-+		discord_fetch_url(da, "https://" DISCORD_API_SERVER "/api/" DISCORD_API_VERSION "/auth/fingerprint", "{}", discord_got_login_fingerprint, NULL);
++		/* Without a fingerprint Discord rejects every 2FA code (and may sign the account out everywhere).
++		 * Unauthenticated requests to /experiments hand one out; Discord only issues 3 valid ones
++		 * per IP every 2 minutes. */
++		discord_fetch_url(da, "https://" DISCORD_API_SERVER "/api/v9/experiments", NULL, discord_got_login_fingerprint, GINT_TO_POINTER(TRUE));
  
  	} else {
  #ifdef	USE_QRCODE_AUTH
-@@ -6553,6 +6621,12 @@ discord_close(PurpleConnection *pc)
+@@ -6553,6 +6634,12 @@ discord_close(PurpleConnection *pc)
  	da->frame = NULL;
  	g_free(da->token);
  	da->token = NULL;
