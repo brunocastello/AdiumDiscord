@@ -38,9 +38,11 @@ your own risk.
 ## What works / what doesn't (yet)
 
 - Direct messages, presence (Online / Idle / Do Not Disturb / Invisible)
-- Server channels open as group chats when you are @mentioned
-- Not yet: joining server channels from Adium's **Join Group Chat** window, voice/video,
-  QR-code login.
+- Server channels: **File → Join Group Chat…**, pick the Discord account, then a server and one
+  of its channels. You can also paste a channel link (right-click a channel in Discord → Copy
+  Link) or a channel ID. Channel windows are titled "#channel (Server)".
+- Server channels also open by themselves when you are @mentioned in them.
+- Not yet: voice/video, QR-code login, security-key (WebAuthn) or SMS two-factor login.
 
 ## Building
 

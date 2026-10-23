@@ -26,6 +26,8 @@
 #import <Adium/AIStatusControllerProtocol.h>
 #import <Adium/ESDebugAILog.h>
 #import <AIUtilities/AIKeychain.h>
+#import <Adium/AIChat.h>
+#import "ADDiscordBridge.h"
 
 #define DISCORD_KEYCHAIN_SERVICE	@"Adium Discord token"
 #define DISCORD_PRPL_ID				"prpl-eionrobb-discord"
@@ -39,6 +41,28 @@ static BOOL looksLikeToken(NSString *string)
 	NSCharacterSet *tokenChars = [NSCharacterSet characterSetWithCharactersInString:
 		@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_."];
 	return [[string stringByTrimmingCharactersInSet:tokenChars] length] == 0;
+}
+
+// Removes the account's chats from libpurple's buddy list, and the groups purple-discord made
+// for them (it tags those with an "id") once they are empty.
+static void removeBlistChatsForAccount(PurpleAccount *purpleAccount)
+{
+	PurpleBlistNode *group, *nextGroup, *node, *nextNode;
+
+	for (group = purple_blist_get_root(); group; group = nextGroup) {
+		nextGroup = purple_blist_node_get_sibling_next(group);
+		if (!PURPLE_BLIST_NODE_IS_GROUP(group))
+			continue;
+
+		for (node = purple_blist_node_get_first_child(group); node; node = nextNode) {
+			nextNode = purple_blist_node_get_sibling_next(node);
+			if (PURPLE_BLIST_NODE_IS_CHAT(node) && purple_chat_get_account(PURPLE_CHAT(node)) == purpleAccount)
+				purple_blist_remove_chat(PURPLE_CHAT(node));
+		}
+
+		if (!purple_blist_node_get_first_child(group) && purple_blist_node_get_string(group, "id"))
+			purple_blist_remove_group(PURPLE_GROUP(group));
+	}
 }
 
 @implementation ADDiscordAccount
@@ -121,6 +145,12 @@ static BOOL looksLikeToken(NSString *string)
 	// server channels when mentioned; direct and group messages still open as usual.
 	purple_account_set_int(account, "large-channel-count", 0);
 
+	// purple-discord adds every channel to libpurple's buddy list, which Adium never shows, and
+	// its find_blist_chat looks chats up by channel ID; Adium's chat opening skips the join for
+	// any chat found there, so channels could never be joined from Join Group Chat.
+	purple_account_set_bool(account, "populate-blist", FALSE);
+	removeBlistChatsForAccount(account);
+
 	NSString *token = nil;
 	if (looksLikeToken(password)) {
 		token = password;
@@ -185,6 +215,24 @@ static BOOL looksLikeToken(NSString *string)
 	}
 
 	[super accountConnectionReportDisconnect:text withReason:reason];
+}
+
+#pragma mark Chats
+
+// Server channels would otherwise all be titled by their bare name ("general")
+- (void)updateTitle:(NSString *)inTitle forChat:(AIChat *)chat
+{
+	PurpleConnection *pc = purple_account_get_connection(account);
+	gchar *title = ((pc && chat.name) ? discord_adium_get_channel_title(pc, [chat.name UTF8String]) : NULL);
+
+	if (title) {
+		NSString *serverTitle = [NSString stringWithUTF8String:title];
+		if (serverTitle)
+			inTitle = serverTitle;
+		g_free(title);
+	}
+
+	[super updateTitle:inTitle forChat:chat];
 }
 
 #pragma mark Status

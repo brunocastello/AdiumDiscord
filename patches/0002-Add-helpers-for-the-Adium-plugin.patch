@@ -1,0 +1,95 @@
+Add helpers for the Adium plugin
+
+The Adium wrapper builds its Join Group Chat panel and chat window titles
+from purple-discord's server and channel data, which lives in the private
+DiscordAccount struct:
+
+- discord_adium_foreach_channel() lists the text and announcement channels
+  the user can read on every server, with their categories and positions.
+- discord_adium_get_channel_title() gives "#channel (Server)".
+
+diff --git a/libdiscord.c b/libdiscord.c
+index 161b068..a49375b 100644
+--- a/libdiscord.c
++++ b/libdiscord.c
+@@ -11581,3 +11581,80 @@ plugin_query(GError **error)
+ PURPLE_PLUGIN_INIT(discord, plugin_query, libpurple3_plugin_load, libpurple3_plugin_unload);
+ 
+ #endif
++
++/*
++ * Helpers for the Adium plugin (AdiumDiscord), which has no access to DiscordAccount.
++ */
++
++typedef void (*DiscordAdiumChannelFunc)(const gchar *guild_id, const gchar *guild_name,
++                                        const gchar *category_name, gint category_position,
++                                        const gchar *channel_id, const gchar *channel_name,
++                                        gint channel_position, gpointer user_data);
++
++/* Calls func for every text and announcement channel the user can read, on every server */
++void
++discord_adium_foreach_channel(PurpleConnection *pc, DiscordAdiumChannelFunc func, gpointer user_data)
++{
++	DiscordAccount *da = purple_connection_get_protocol_data(pc);
++	GHashTableIter guild_iter, channel_iter;
++	gpointer key, value;
++	DiscordUser *self_user;
++
++	if (da == NULL || da->new_guilds == NULL) {
++		return;
++	}
++
++	self_user = discord_get_user(da, da->self_user_id);
++
++	g_hash_table_iter_init(&guild_iter, da->new_guilds);
++	while (g_hash_table_iter_next(&guild_iter, &key, &value)) {
++		DiscordGuild *guild = value;
++		gchar *guild_id = from_int(guild->id);
++
++		g_hash_table_iter_init(&channel_iter, guild->channels);
++		while (g_hash_table_iter_next(&channel_iter, &key, &value)) {
++			DiscordChannel *channel = value;
++			DiscordChannel *category = NULL;
++			gchar *channel_id;
++
++			if (channel->type != CHANNEL_GUILD_TEXT && channel->type != CHANNEL_GUILD_NEWS) {
++				continue;
++			}
++			if (self_user != NULL && !(discord_compute_permission(da, self_user, channel) & PERM_VIEW_CHANNEL)) {
++				continue;
++			}
++
++			if (channel->parent_id) {
++				category = g_hash_table_lookup_int64(guild->channels, channel->parent_id);
++			}
++
++			channel_id = from_int(channel->id);
++			func(guild_id, guild->name,
++			     category ? category->name : NULL, category ? category->position : -1,
++			     channel_id, channel->name, channel->position, user_data);
++			g_free(channel_id);
++		}
++
++		g_free(guild_id);
++	}
++}
++
++/* "#channel (Server)" for a server channel, or NULL; free with g_free() */
++gchar *
++discord_adium_get_channel_title(PurpleConnection *pc, const gchar *channel_id)
++{
++	DiscordAccount *da = purple_connection_get_protocol_data(pc);
++	DiscordGuild *guild = NULL;
++	DiscordChannel *channel;
++
++	if (da == NULL || channel_id == NULL || !str_is_number(channel_id)) {
++		return NULL;
++	}
++
++	channel = discord_get_channel_global_int_guild(da, to_int(channel_id), &guild);
++	if (channel == NULL || channel->name == NULL || guild == NULL || guild->name == NULL) {
++		return NULL;
++	}
++
++	return g_strdup_printf("#%s (%s)", channel->name, guild->name);
++}

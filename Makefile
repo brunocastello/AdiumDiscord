@@ -60,7 +60,8 @@ DISCORD_SRCS := \
 	$(SRC)/purple2compat/purple-socket.c
 
 OUR_C_SRCS    := Source/ADGioCompat.c Source/ADJsonCompat.c
-OUR_OBJC_SRCS := Source/ADDiscordPlugin.m Source/ADDiscordService.m Source/ADDiscordAccount.m
+OUR_OBJC_SRCS := Source/ADDiscordPlugin.m Source/ADDiscordService.m Source/ADDiscordAccount.m \
+	Source/ADDiscordJoinChatViewController.m
 
 obj = $(BUILD)/$(1)/$(notdir $(basename $(2))).o
 DISCORD_OBJS = $(foreach s,$(DISCORD_SRCS),$(call obj,$(1),$(s)))

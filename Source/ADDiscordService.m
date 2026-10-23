@@ -8,6 +8,7 @@
 
 #import "ADDiscordService.h"
 #import "ADDiscordAccount.h"
+#import "ADDiscordJoinChatViewController.h"
 #import <Adium/AISharedAdium.h>
 #import <Adium/AIStatusControllerProtocol.h>
 #import <AIUtilities/AIImageAdditions.h>
@@ -28,9 +29,14 @@
 - (NSString *)userNameLabel             { return @"Email"; }
 - (NSString *)contactUserNameLabel      { return @"Discord Username"; }
 - (BOOL)caseSensitive                   { return YES; }
-- (BOOL)canCreateGroupChats             { return NO; }
+- (BOOL)canCreateGroupChats             { return YES; }
 - (BOOL)canRegisterNewAccounts          { return NO; }
 - (BOOL)supportsProxySettings           { return YES; }
+
+- (DCJoinChatViewController *)joinChatView
+{
+	return [ADDiscordJoinChatViewController joinChatView];
+}
 
 - (NSImage *)defaultServiceIconOfType:(AIServiceIconType)iconType
 {
