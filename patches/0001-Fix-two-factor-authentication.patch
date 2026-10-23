@@ -1,32 +1,36 @@
-Send a login fingerprint so two-factor authentication works
+Fix two-factor authentication
 
-Discord now rejects every 2FA code unless the login and the /auth/mfa/totp
-request carry an X-Fingerprint obtained from /auth/fingerprint; a rejected
-attempt can also sign the account out everywhere. This is the cause of
-purple-discord issues #477 and #489, and the same fix Discord Lite made in
-dosdude1/discord-lite@fde55a8.
+Discord rejects every 2FA code unless the login and the 2FA request carry an
+X-Fingerprint obtained from /auth/fingerprint; a rejected attempt can also sign
+the account out everywhere. This is the cause of purple-discord issues #477 and
+#489, and the same fix Discord Lite made in dosdude1/discord-lite@fde55a8.
 
 - Fetch /auth/fingerprint before the password login and send it (with a
   login Referer) on the unauthenticated requests.
-- Send the same login and 2FA bodies as the official client
-  (undelete, login_source, gift_code_sku_id).
+- Send the same login and 2FA bodies as the official client (undelete,
+  login_source, gift_code_sku_id), and pass the login_instance_id from the
+  login response on to the 2FA request.
+- Send 8-character backup codes to /auth/mfa/backup instead of /auth/mfa/totp,
+  without the dash they are displayed with, and say in the prompt that
+  backup codes are accepted.
 - Report Discord's own error message (eg. "Invalid two-factor code") instead
   of "Bad username/password".
-- Free fingerprint and mfa_ticket on close.
+- Free fingerprint, mfa_ticket and login_instance_id on close.
 
 diff --git a/libdiscord.c b/libdiscord.c
-index 31fc76c..85db577 100644
+index 31fc76c..0a489ac 100644
 --- a/libdiscord.c
 +++ b/libdiscord.c
-@@ -393,6 +393,7 @@ typedef struct {
+@@ -393,6 +393,8 @@ typedef struct {
  	gchar *token;
  	gchar *session_id;
  	gchar *mfa_ticket;
 +	gchar *fingerprint;
++	gchar *login_instance_id;
  	gchar *ack_token;
  
  	PurpleSslConnection *websocket;
-@@ -1706,6 +1707,10 @@ discord_fetch_url_with_method_len(DiscordAccount *ya, const gchar *method, const
+@@ -1706,6 +1708,10 @@ discord_fetch_url_with_method_len(DiscordAccount *ya, const gchar *method, const
  
  	if (ya->token) {
  		purple_http_request_header_set(request, "Authorization", ya->token);
@@ -37,16 +41,62 @@ index 31fc76c..85db577 100644
  	}
  
  	if (postdata) {
-@@ -6290,6 +6295,8 @@ discord_mfa_text_entry(gpointer user_data, const gchar *code)
+@@ -6286,15 +6292,35 @@ discord_mfa_text_entry(gpointer user_data, const gchar *code)
+ {
+ 	DiscordAccount *da = user_data;
+ 	JsonObject *data = json_object_new();
+-	gchar *str;
++	GString *clean_code = g_string_new(NULL);
++	const gchar *method;
++	gchar *str, *url;
++
++	/* Backup codes are shown as "xxxx-xxxx"; send just the characters */
++	for (; code && *code; code++) {
++		if (*code != '-' && !g_ascii_isspace(*code)) {
++			g_string_append_c(clean_code, *code);
++		}
++	}
++
++	/* 6-digit authenticator codes go to /totp, 8-character backup codes to /backup */
++	method = clean_code->len == 8 ? "backup" : "totp";
  
- 	json_object_set_string_member(data, "code", code);
+-	json_object_set_string_member(data, "code", code);
++	json_object_set_string_member(data, "code", clean_code->str);
  	json_object_set_string_member(data, "ticket", da->mfa_ticket);
++	if (da->login_instance_id) {
++		json_object_set_string_member(data, "login_instance_id", da->login_instance_id);
++	}
 +	json_object_set_null_member(data, "login_source");
 +	json_object_set_null_member(data, "gift_code_sku_id");
  
  	str = json_object_to_string(data);
- 	discord_fetch_url(da, "https://" DISCORD_API_SERVER "/api/" DISCORD_API_VERSION "/auth/mfa/totp", str, discord_login_response, NULL);
-@@ -6377,11 +6384,60 @@ discord_login_response(DiscordAccount *da, JsonNode *node, gpointer user_data)
+-	discord_fetch_url(da, "https://" DISCORD_API_SERVER "/api/" DISCORD_API_VERSION "/auth/mfa/totp", str, discord_login_response, NULL);
++	url = g_strdup_printf("https://" DISCORD_API_SERVER "/api/" DISCORD_API_VERSION "/auth/mfa/%s", method);
++	discord_fetch_url(da, url, str, discord_login_response, NULL);
+ 
++	g_free(url);
+ 	g_free(str);
++	g_string_free(clean_code, TRUE);
+ 	json_object_unref(data);
+ 
+ 	g_free(da->mfa_ticket);
+@@ -6328,12 +6354,14 @@ discord_login_response(DiscordAccount *da, JsonNode *node, gpointer user_data)
+ 		if (json_object_get_boolean_member(response, "mfa")) {
+ 			g_free(da->mfa_ticket);
+ 			da->mfa_ticket = g_strdup(json_object_get_string_member(response, "ticket"));
++			g_free(da->login_instance_id);
++			da->login_instance_id = g_strdup(json_object_get_string_member(response, "login_instance_id"));
+ 
+ 			purple_request_input(
+ 				da->pc,
+ 				_("Two-factor authentication"),
+ 				_("Enter Discord auth code"),
+-				_("You can get this token from your two-factor authentication mobile app."),
++				_("Enter the 6-digit code from your authenticator app, or one of your 8-character backup codes."),
+ 				NULL, FALSE, FALSE, "",
+ 				_("_Login"), G_CALLBACK(discord_mfa_text_entry),
+ 				_("_Cancel"), G_CALLBACK(discord_mfa_cancel),
+@@ -6377,11 +6405,60 @@ discord_login_response(DiscordAccount *da, JsonNode *node, gpointer user_data)
  				}
  			}
  		}
@@ -107,7 +157,7 @@ index 31fc76c..85db577 100644
  void
  discord_login(PurpleAccount *account)
  {
-@@ -6446,17 +6502,8 @@ discord_login(PurpleAccount *account)
+@@ -6446,17 +6523,8 @@ discord_login(PurpleAccount *account)
  		discord_start_socket(da);
  
  	} else if (account_password && *account_password) {
@@ -127,7 +177,7 @@ index 31fc76c..85db577 100644
  
  	} else {
  #ifdef	USE_QRCODE_AUTH
-@@ -6553,6 +6600,10 @@ discord_close(PurpleConnection *pc)
+@@ -6553,6 +6621,12 @@ discord_close(PurpleConnection *pc)
  	da->frame = NULL;
  	g_free(da->token);
  	da->token = NULL;
@@ -135,6 +185,8 @@ index 31fc76c..85db577 100644
 +	da->fingerprint = NULL;
 +	g_free(da->mfa_ticket);
 +	da->mfa_ticket = NULL;
++	g_free(da->login_instance_id);
++	da->login_instance_id = NULL;
  	g_free(da->session_id);
  	da->session_id = NULL;
  	g_free(da->self_username);
