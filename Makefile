@@ -39,7 +39,7 @@ COMMON_FLAGS := -isysroot $(SDK) -mmacosx-version-min=10.6 -O2 -g \
 # emit purple_init_discord_plugin() for ADDiscordPlugin to call.
 DISCORD_FLAGS := -std=gnu99 -w \
 	-DMARKDOWN_PIDGIN -DDISCORD_PLUGIN_VERSION='"$(PURPLE_DISCORD_REV)"' \
-	-include Source/ADGioCompat.h \
+	-include Source/ADGioCompat.h -include Source/ADJsonCompat.h \
 	-I$(SRC) -I$(SRC)/purple2compat
 
 OUR_FLAGS := -Wall -Wno-unknown-pragmas -Wno-deprecated-declarations -ISource
@@ -59,7 +59,7 @@ DISCORD_SRCS := \
 	$(SRC)/purple2compat/http.c \
 	$(SRC)/purple2compat/purple-socket.c
 
-OUR_C_SRCS    := Source/ADGioCompat.c
+OUR_C_SRCS    := Source/ADGioCompat.c Source/ADJsonCompat.c
 OUR_OBJC_SRCS := Source/ADDiscordPlugin.m Source/ADDiscordService.m Source/ADDiscordAccount.m
 
 obj = $(BUILD)/$(1)/$(notdir $(basename $(2))).o
@@ -78,9 +78,9 @@ $(SRC)/.patched: $(PATCHES) .git/modules/purple-discord/HEAD
 $(DISCORD_SRCS): $(SRC)/.patched ;
 
 define ARCH_RULES
-$(BUILD)/$(1)/%.o: $(SRC)/%.c Source/ADGioCompat.h | $(BUILD)/$(1)
+$(BUILD)/$(1)/%.o: $(SRC)/%.c Source/ADGioCompat.h Source/ADJsonCompat.h | $(BUILD)/$(1)
 	$$(CC_$(1)) $(COMMON_FLAGS) $(DISCORD_FLAGS) -c $$< -o $$@
-$(BUILD)/$(1)/%.o: $(SRC)/purple2compat/%.c | $(BUILD)/$(1)
+$(BUILD)/$(1)/%.o: $(SRC)/purple2compat/%.c Source/ADGioCompat.h Source/ADJsonCompat.h | $(BUILD)/$(1)
 	$$(CC_$(1)) $(COMMON_FLAGS) $(DISCORD_FLAGS) -c $$< -o $$@
 $(BUILD)/$(1)/%.o: Source/%.c | $(BUILD)/$(1)
 	$$(CC_$(1)) $(COMMON_FLAGS) -std=gnu99 $(OUR_FLAGS) -c $$< -o $$@
