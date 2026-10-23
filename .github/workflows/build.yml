@@ -92,10 +92,12 @@ jobs:
             "$OTOOL" -arch "$arch" -l "$PLUGIN" | grep -A3 LC_VERSION_MIN_MACOSX
           done
 
+      # Upload the zip rather than the bundle directory: Actions would otherwise drop the
+      # Discord.AdiumLibpurplePlugin folder and leave just Contents/ at the top of the download.
       - uses: actions/upload-artifact@v4
         with:
           name: Discord-${{ env.VERSION }}
-          path: build/Discord.AdiumLibpurplePlugin
+          path: build/Discord-${{ env.VERSION }}.zip
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')
