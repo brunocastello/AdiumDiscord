@@ -48,6 +48,13 @@ static BOOL looksLikeToken(NSString *string)
 	return DISCORD_PRPL_ID;
 }
 
+// purple-discord has its servers built in; Adium only uses this for its reachability check,
+// and prompts "No Server Specified" when it is empty.
+- (NSString *)host
+{
+	return @"discord.com";
+}
+
 #pragma mark Token storage
 
 - (NSString *)keychainAccountName
