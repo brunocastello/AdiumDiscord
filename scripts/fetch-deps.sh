@@ -77,17 +77,16 @@ if [ ! -d "$APP" ]; then
 		hdiutil detach -quiet "$MNT"
 		;;
 	*)
+		# Extract only the three framework binaries we need: a full extraction trips over a
+		# symlink in the image that 7-Zip refuses ("Dangerous symbolic link path").
 		X=$DEPS/dmg-extract
 		rm -rf "$X"; mkdir -p "$X"
-		7z x -y -o"$X" "$DEPS/Adium_1.5.10.dmg" >/dev/null
-		# Older 7-Zip versions stop at the partition image; unpack that too.
-		HFS=$(find "$X" -maxdepth 1 -type f \( -name '*.hfs' -o -name '*disk image*' \) | head -n 1)
-		if [ -n "$HFS" ] && [ -z "$(find "$X" -type d -name Adium.app | head -n 1)" ]; then
-			7z x -y -o"$X" "$HFS" >/dev/null
-		fi
-		FOUND=$(find "$X" -type d -name Adium.app | head -n 1)
-		[ -n "$FOUND" ] || { echo "error: Adium.app not found in DMG" >&2; exit 1; }
-		mv "$FOUND" "$APP"
+		WANT=$(7z l -slt "$DEPS/Adium_1.5.10.dmg" | sed -n 's/^Path = //p' |
+			grep -E '/Adium\.app/Contents/Frameworks/(Adium|AdiumLibpurple|AIUtilities)\.framework/Versions/A/(Adium|AdiumLibpurple|AIUtilities)$')
+		[ "$(printf '%s\n' "$WANT" | wc -l)" -eq 3 ] || { echo "error: framework binaries not found in DMG" >&2; exit 1; }
+		printf '%s\n' "$WANT" > "$X/list"
+		7z x -y -o"$X" "$DEPS/Adium_1.5.10.dmg" @"$X/list" >/dev/null
+		mv "$X/$(printf '%s\n' "$WANT" | head -n 1 | sed 's|/Contents/.*||')" "$APP"
 		rm -rf "$X"
 		;;
 	esac
