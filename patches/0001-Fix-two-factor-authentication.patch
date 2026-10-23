@@ -13,14 +13,16 @@ Discord Lite made in dosdude1/discord-lite@fde55a8.
   login_source, gift_code_sku_id), and pass the login_instance_id from the
   login response on to the 2FA request.
 - Send 8-character backup codes to /auth/mfa/backup instead of /auth/mfa/totp,
-  without the dash they are displayed with, and say in the prompt that
-  backup codes are accepted.
+  without the dash they are displayed with.
+- Word the prompt after the methods the login response says the account has
+  (totp, backup), so eg. an account without an authenticator app asks for a
+  backup code instead of silently rejecting authenticator codes.
 - Report Discord's own error message (eg. "Invalid two-factor code") instead
   of "Bad username/password".
 - Free fingerprint, mfa_ticket and login_instance_id on close.
 
 diff --git a/libdiscord.c b/libdiscord.c
-index 31fc76c..1953ead 100644
+index 31fc76c..161b068 100644
 --- a/libdiscord.c
 +++ b/libdiscord.c
 @@ -393,6 +393,8 @@ typedef struct {
@@ -58,11 +60,11 @@ index 31fc76c..1953ead 100644
 +			g_string_append_c(clean_code, *code);
 +		}
 +	}
-+
-+	/* 6-digit authenticator codes go to /totp, 8-character backup codes to /backup */
-+	method = clean_code->len == 8 ? "backup" : "totp";
  
 -	json_object_set_string_member(data, "code", code);
++	/* 6-digit authenticator codes go to /totp, 8-character backup codes to /backup */
++	method = clean_code->len == 8 ? "backup" : "totp";
++
 +	json_object_set_string_member(data, "code", clean_code->str);
  	json_object_set_string_member(data, "ticket", da->mfa_ticket);
 +	if (da->login_instance_id) {
@@ -82,8 +84,25 @@ index 31fc76c..1953ead 100644
  	json_object_unref(data);
  
  	g_free(da->mfa_ticket);
-@@ -6328,12 +6354,14 @@ discord_login_response(DiscordAccount *da, JsonNode *node, gpointer user_data)
+@@ -6326,14 +6352,31 @@ discord_login_response(DiscordAccount *da, JsonNode *node, gpointer user_data)
+ 		}
+ 
  		if (json_object_get_boolean_member(response, "mfa")) {
++			gboolean has_totp = json_object_get_boolean_member(response, "totp");
++			gboolean has_backup = json_object_get_boolean_member(response, "backup");
++			const gchar *hint;
++
++			/* Tell the user which codes this account can actually use */
++			if (has_totp && has_backup) {
++				hint = _("Enter the 6-digit code from your authenticator app, or one of your 8-character backup codes.");
++			} else if (has_totp) {
++				hint = _("Enter the 6-digit code from your authenticator app.");
++			} else if (has_backup) {
++				hint = _("This Discord account has no authenticator app set up, so authenticator codes will not work. Enter one of your 8-character backup codes.");
++			} else {
++				hint = _("This Discord account only has two-factor methods this client cannot use (SMS or a security key). Log in with a token instead.");
++			}
++
  			g_free(da->mfa_ticket);
  			da->mfa_ticket = g_strdup(json_object_get_string_member(response, "ticket"));
 +			g_free(da->login_instance_id);
@@ -94,11 +113,11 @@ index 31fc76c..1953ead 100644
  				_("Two-factor authentication"),
  				_("Enter Discord auth code"),
 -				_("You can get this token from your two-factor authentication mobile app."),
-+				_("Enter the 6-digit code from your authenticator app, or one of your 8-character backup codes."),
++				hint,
  				NULL, FALSE, FALSE, "",
  				_("_Login"), G_CALLBACK(discord_mfa_text_entry),
  				_("_Cancel"), G_CALLBACK(discord_mfa_cancel),
-@@ -6377,11 +6405,71 @@ discord_login_response(DiscordAccount *da, JsonNode *node, gpointer user_data)
+@@ -6377,11 +6420,71 @@ discord_login_response(DiscordAccount *da, JsonNode *node, gpointer user_data)
  				}
  			}
  		}
@@ -170,7 +189,7 @@ index 31fc76c..1953ead 100644
  void
  discord_login(PurpleAccount *account)
  {
-@@ -6446,17 +6534,10 @@ discord_login(PurpleAccount *account)
+@@ -6446,17 +6549,10 @@ discord_login(PurpleAccount *account)
  		discord_start_socket(da);
  
  	} else if (account_password && *account_password) {
@@ -192,7 +211,7 @@ index 31fc76c..1953ead 100644
  
  	} else {
  #ifdef	USE_QRCODE_AUTH
-@@ -6553,6 +6634,12 @@ discord_close(PurpleConnection *pc)
+@@ -6553,6 +6649,12 @@ discord_close(PurpleConnection *pc)
  	da->frame = NULL;
  	g_free(da->token);
  	da->token = NULL;

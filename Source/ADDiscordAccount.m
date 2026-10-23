@@ -48,6 +48,30 @@ static BOOL looksLikeToken(NSString *string)
 	return DISCORD_PRPL_ID;
 }
 
+// Adium registers third-party protocols only after libpurple has loaded accounts.xml, so the
+// PurpleAccount restored for us at launch has no status types and no presence, and setting any
+// status (going online included) fails with "Invalid status ID". Finish what
+// purple_account_new() does when the protocol is already known.
+- (void)setPurpleAccount:(PurpleAccount *)inAccount
+{
+	[super setPurpleAccount:inAccount];
+
+	if (inAccount && !purple_account_get_presence(inAccount)) {
+		PurplePlugin *prpl = purple_find_prpl(purple_account_get_protocol_id(inAccount));
+		PurplePluginProtocolInfo *prpl_info = (prpl ? PURPLE_PLUGIN_PROTOCOL_INFO(prpl) : NULL);
+
+		if (prpl_info && prpl_info->status_types) {
+			AILog(@"Discord: giving %@'s restored PurpleAccount its statuses", self.UID);
+			purple_account_set_status_types(inAccount, prpl_info->status_types(inAccount));
+			inAccount->presence = purple_presence_new_for_account(inAccount);
+
+			PurpleStatusType *available = purple_account_get_status_type_with_primitive(inAccount, PURPLE_STATUS_AVAILABLE);
+			purple_presence_set_status_active(inAccount->presence,
+			                                  (available ? purple_status_type_get_id(available) : "offline"), TRUE);
+		}
+	}
+}
+
 // purple-discord has its servers built in; Adium only uses this for its reachability check,
 // and prompts "No Server Specified" when it is empty.
 - (NSString *)host
@@ -143,6 +167,12 @@ static BOOL looksLikeToken(NSString *string)
 		[self setStoredToken:nil];
 		usedStoredToken = NO;
 		reason = PURPLE_CONNECTION_ERROR_AUTHENTICATION_FAILED;
+	} else if (reason == PURPLE_CONNECTION_ERROR_AUTHENTICATION_FAILED &&
+	           ([text rangeOfString:@"two-factor" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+	            [text rangeOfString:@"2FA"].location != NSNotFound)) {
+		// A rejected or cancelled 2FA code is not a wrong password: as an authentication failure,
+		// Adium would forget the password and immediately start over. Stop and show the error.
+		reason = PURPLE_CONNECTION_ERROR_OTHER_ERROR;
 	} else {
 		// Logged in, but the gateway connection failed before Adium saw us connect
 		[self saveIssuedToken];
