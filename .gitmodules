@@ -1,0 +1,3 @@
+[submodule "purple-discord"]
+	path = purple-discord
+	url = https://github.com/EionRobb/purple-discord.git

@@ -1,0 +1,103 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # attach the plugin to GitHub releases on tags
+
+env:
+  # osxcross (cctools-port ld64) is used because current Xcode can no longer link i386.
+  OSXCROSS_COMMIT: 27d21e4977c9751d01199c7a226a6faf494c3dd9
+  OSXCROSS: /opt/osxcross
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            clang cmake python3 make patch xz-utils bzip2 cpio \
+            libxml2-dev libssl-dev zlib1g-dev liblzma-dev libbz2-dev llvm-dev uuid-dev \
+            p7zip-full zip
+
+      - name: Cache downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps/MacOSX10.6.sdk.tar.xz
+            deps/Adium_1.5.10.dmg
+          key: downloads-${{ hashFiles('scripts/fetch-deps.sh') }}
+
+      - name: Fetch SDK and Adium 1.5.10 frameworks
+        run: ./scripts/fetch-deps.sh
+
+      - name: Cache osxcross
+        id: osxcross-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.OSXCROSS }}
+          key: osxcross-${{ env.OSXCROSS_COMMIT }}-sdk10.6-ubuntu24.04
+
+      - name: Build osxcross
+        if: steps.osxcross-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone -q https://github.com/tpoechtrager/osxcross.git "$RUNNER_TEMP/osxcross"
+          cd "$RUNNER_TEMP/osxcross"
+          git checkout -q "$OSXCROSS_COMMIT"
+          cp "$GITHUB_WORKSPACE/deps/MacOSX10.6.sdk.tar.xz" tarballs/
+          sudo mkdir -p "$OSXCROSS" && sudo chown "$USER" "$OSXCROSS"
+          UNATTENDED=1 BUILD_FLAVOR=stable TARGET_DIR="$OSXCROSS" \
+            ENABLE_ARCHS="i386 x86_64" OSX_VERSION_MIN=10.6 ./build.sh
+
+      - name: Build plugin
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.1.0-$(git rev-parse --short HEAD)"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          BIN="$OSXCROSS/bin"
+          make dist VERSION="$VERSION" \
+            CC_i386="$BIN/o32-clang" CC_x86_64="$BIN/o64-clang" \
+            LIPO="$(ls "$BIN"/x86_64-apple-darwin*-lipo | head -n 1)"
+
+      - name: Check binary
+        run: |
+          BIN="$OSXCROSS/bin"
+          OTOOL="$(ls "$BIN"/x86_64-apple-darwin*-otool | head -n 1)"
+          LIPO="$(ls "$BIN"/x86_64-apple-darwin*-lipo | head -n 1)"
+          PLUGIN=build/Discord.AdiumLibpurplePlugin/Contents/MacOS/Discord
+          "$LIPO" -info "$PLUGIN"
+          "$LIPO" "$PLUGIN" -verify_arch i386 x86_64
+          for arch in i386 x86_64; do
+            echo "== $arch"
+            "$OTOOL" -arch "$arch" -L "$PLUGIN"
+            "$OTOOL" -arch "$arch" -l "$PLUGIN" | grep -A3 LC_VERSION_MIN_MACOSX
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Discord-${{ env.VERSION }}
+          path: build/Discord.AdiumLibpurplePlugin
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" "build/Discord-$VERSION.zip" --clobber
