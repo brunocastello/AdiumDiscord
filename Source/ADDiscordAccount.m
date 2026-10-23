@@ -100,23 +100,35 @@ static BOOL looksLikeToken(NSString *string)
 		usedStoredToken = ([token length] > 0);
 	}
 
+	// With nothing to supply, leave alone any token the plugin got earlier in this session, so a
+	// reconnect after a dropped gateway connection doesn't redo the password and 2FA login.
+	if ([token length])
+		purple_account_set_string(account, "token", [token UTF8String]);
+
+	const char *currentToken = purple_account_get_string(account, "token", NULL);
 	AILog(@"Discord: connecting %@ with %@", self.UID,
-	      ([token length] ? (usedStoredToken ? @"saved token" : @"token from password field") : @"email and password"));
-	purple_account_set_string(account, "token", ([token length] ? [token UTF8String] : NULL));
+	      ((currentToken && *currentToken) ? (looksLikeToken(password) ? @"token from password field" : @"saved token")
+	                                       : @"email and password"));
+}
+
+// Keep the token issued by an email/password login for next time
+- (void)saveIssuedToken
+{
+	if (looksLikeToken(password))
+		return;
+
+	const char *token = purple_account_get_string(account, "token", NULL);
+	if (token && *token) {
+		NSString *newToken = [NSString stringWithUTF8String:token];
+		if (![newToken isEqualToString:[self storedToken]])
+			[self setStoredToken:newToken];
+		usedStoredToken = YES;
+	}
 }
 
 - (void)didConnect
 {
-	// Keep the token issued by an email/password login for next time
-	if (!looksLikeToken(password)) {
-		const char *token = purple_account_get_string(account, "token", NULL);
-		if (token && *token) {
-			NSString *newToken = [NSString stringWithUTF8String:token];
-			if (![newToken isEqualToString:[self storedToken]])
-				[self setStoredToken:newToken];
-		}
-	}
-
+	[self saveIssuedToken];
 	[super didConnect];
 }
 
@@ -131,6 +143,9 @@ static BOOL looksLikeToken(NSString *string)
 		[self setStoredToken:nil];
 		usedStoredToken = NO;
 		reason = PURPLE_CONNECTION_ERROR_AUTHENTICATION_FAILED;
+	} else {
+		// Logged in, but the gateway connection failed before Adium saw us connect
+		[self saveIssuedToken];
 	}
 
 	[super accountConnectionReportDisconnect:text withReason:reason];

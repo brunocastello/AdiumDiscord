@@ -23,6 +23,10 @@ LIPO      ?= lipo
 BUILD  := build
 PLUGIN := $(BUILD)/Discord.AdiumLibpurplePlugin
 
+# purple-discord is compiled from a copy of the submodule's HEAD with patches/*.patch applied.
+PATCHES := $(sort $(wildcard patches/*.patch))
+SRC     := $(BUILD)/purple-discord
+
 COMMON_FLAGS := -isysroot $(SDK) -mmacosx-version-min=10.6 -O2 -g \
 	-F$(FW) \
 	-I$(FW)/libpurple.framework/Headers \
@@ -36,7 +40,7 @@ COMMON_FLAGS := -isysroot $(SDK) -mmacosx-version-min=10.6 -O2 -g \
 DISCORD_FLAGS := -std=gnu99 -w \
 	-DMARKDOWN_PIDGIN -DDISCORD_PLUGIN_VERSION='"$(PURPLE_DISCORD_REV)"' \
 	-include Source/ADGioCompat.h \
-	-Ipurple-discord -Ipurple-discord/purple2compat
+	-I$(SRC) -I$(SRC)/purple2compat
 
 OUR_FLAGS := -Wall -Wno-unknown-pragmas -Wno-deprecated-declarations -ISource
 
@@ -49,11 +53,11 @@ LDFLAGS := -bundle -mmacosx-version-min=10.6 -isysroot $(SDK) -F$(FW) \
 	-lz
 
 DISCORD_SRCS := \
-	purple-discord/libdiscord.c \
-	purple-discord/markdown.c \
-	purple-discord/discord_lottie.c \
-	purple-discord/purple2compat/http.c \
-	purple-discord/purple2compat/purple-socket.c
+	$(SRC)/libdiscord.c \
+	$(SRC)/markdown.c \
+	$(SRC)/discord_lottie.c \
+	$(SRC)/purple2compat/http.c \
+	$(SRC)/purple2compat/purple-socket.c
 
 OUR_C_SRCS    := Source/ADGioCompat.c
 OUR_OBJC_SRCS := Source/ADDiscordPlugin.m Source/ADDiscordService.m Source/ADDiscordAccount.m
@@ -65,10 +69,18 @@ OUR_OBJS     = $(foreach s,$(OUR_C_SRCS) $(OUR_OBJC_SRCS),$(call obj,$(1),$(s)))
 .PHONY: all dist clean
 all: $(PLUGIN)
 
+$(SRC)/.patched: $(PATCHES) .git/modules/purple-discord/HEAD
+	rm -rf $(SRC)
+	mkdir -p $(SRC)
+	git -C purple-discord archive HEAD | tar -x -C $(SRC)
+	for p in $(PATCHES); do patch -d $(SRC) -p1 --no-backup-if-mismatch < $$p || exit 1; done
+	touch $@
+$(DISCORD_SRCS): $(SRC)/.patched ;
+
 define ARCH_RULES
-$(BUILD)/$(1)/%.o: purple-discord/%.c Source/ADGioCompat.h | $(BUILD)/$(1)
+$(BUILD)/$(1)/%.o: $(SRC)/%.c Source/ADGioCompat.h | $(BUILD)/$(1)
 	$$(CC_$(1)) $(COMMON_FLAGS) $(DISCORD_FLAGS) -c $$< -o $$@
-$(BUILD)/$(1)/%.o: purple-discord/purple2compat/%.c | $(BUILD)/$(1)
+$(BUILD)/$(1)/%.o: $(SRC)/purple2compat/%.c | $(BUILD)/$(1)
 	$$(CC_$(1)) $(COMMON_FLAGS) $(DISCORD_FLAGS) -c $$< -o $$@
 $(BUILD)/$(1)/%.o: Source/%.c | $(BUILD)/$(1)
 	$$(CC_$(1)) $(COMMON_FLAGS) -std=gnu99 $(OUR_FLAGS) -c $$< -o $$@

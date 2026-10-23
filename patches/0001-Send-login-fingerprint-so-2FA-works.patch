@@ -1,0 +1,140 @@
+Send a login fingerprint so two-factor authentication works
+
+Discord now rejects every 2FA code unless the login and the /auth/mfa/totp
+request carry an X-Fingerprint obtained from /auth/fingerprint; a rejected
+attempt can also sign the account out everywhere. This is the cause of
+purple-discord issues #477 and #489, and the same fix Discord Lite made in
+dosdude1/discord-lite@fde55a8.
+
+- Fetch /auth/fingerprint before the password login and send it (with a
+  login Referer) on the unauthenticated requests.
+- Send the same login and 2FA bodies as the official client
+  (undelete, login_source, gift_code_sku_id).
+- Report Discord's own error message (eg. "Invalid two-factor code") instead
+  of "Bad username/password".
+- Free fingerprint and mfa_ticket on close.
+
+diff --git a/libdiscord.c b/libdiscord.c
+index 31fc76c..85db577 100644
+--- a/libdiscord.c
++++ b/libdiscord.c
+@@ -393,6 +393,7 @@ typedef struct {
+ 	gchar *token;
+ 	gchar *session_id;
+ 	gchar *mfa_ticket;
++	gchar *fingerprint;
+ 	gchar *ack_token;
+ 
+ 	PurpleSslConnection *websocket;
+@@ -1706,6 +1707,10 @@ discord_fetch_url_with_method_len(DiscordAccount *ya, const gchar *method, const
+ 
+ 	if (ya->token) {
+ 		purple_http_request_header_set(request, "Authorization", ya->token);
++	} else if (ya->fingerprint) {
++		/* Discord ties the login and its 2FA ticket to this fingerprint */
++		purple_http_request_header_set(request, "X-Fingerprint", ya->fingerprint);
++		purple_http_request_header_set(request, "Referer", "https://" DISCORD_API_SERVER "/login");
+ 	}
+ 
+ 	if (postdata) {
+@@ -6290,6 +6295,8 @@ discord_mfa_text_entry(gpointer user_data, const gchar *code)
+ 
+ 	json_object_set_string_member(data, "code", code);
+ 	json_object_set_string_member(data, "ticket", da->mfa_ticket);
++	json_object_set_null_member(data, "login_source");
++	json_object_set_null_member(data, "gift_code_sku_id");
+ 
+ 	str = json_object_to_string(data);
+ 	discord_fetch_url(da, "https://" DISCORD_API_SERVER "/api/" DISCORD_API_VERSION "/auth/mfa/totp", str, discord_login_response, NULL);
+@@ -6377,11 +6384,60 @@ discord_login_response(DiscordAccount *da, JsonNode *node, gpointer user_data)
+ 				}
+ 			}
+ 		}
++
++		/* eg. {"message": "Invalid two-factor code", "code": 60008} */
++		if (json_object_has_member(response, "message")) {
++			purple_connection_error(da->pc, PURPLE_CONNECTION_ERROR_AUTHENTICATION_FAILED, json_object_get_string_member(response, "message"));
++			return;
++		}
+ 	}
+ 
+ 	purple_connection_error(da->pc, PURPLE_CONNECTION_ERROR_AUTHENTICATION_FAILED, _("Bad username/password"));
+ }
+ 
++static void
++discord_send_login(DiscordAccount *da)
++{
++	JsonObject *data = json_object_new();
++	gchar *str;
++
++	json_object_set_string_member(data, "login", purple_account_get_username(da->account));
++	json_object_set_string_member(data, "password", purple_connection_get_password(da->pc));
++	json_object_set_boolean_member(data, "undelete", FALSE);
++	json_object_set_null_member(data, "login_source");
++	json_object_set_null_member(data, "gift_code_sku_id");
++
++	str = json_object_to_string(data);
++	discord_fetch_url(da, "https://" DISCORD_API_SERVER "/api/" DISCORD_API_VERSION "/auth/login", str, discord_login_response, NULL);
++
++	g_free(str);
++	json_object_unref(data);
++}
++
++static void
++discord_got_login_fingerprint(DiscordAccount *da, JsonNode *node, gpointer user_data)
++{
++	if (node == NULL) {
++		/* The connection already failed or went away */
++		return;
++	}
++
++	if (JSON_NODE_HOLDS_OBJECT(node)) {
++		const gchar *fingerprint = json_object_get_string_member(json_node_get_object(node), "fingerprint");
++
++		if (fingerprint != NULL) {
++			g_free(da->fingerprint);
++			da->fingerprint = g_strdup(fingerprint);
++		}
++	}
++
++	if (da->fingerprint == NULL) {
++		purple_debug_warning("discord", "No login fingerprint; two-factor authentication may fail\n");
++	}
++
++	discord_send_login(da);
++}
++
+ void
+ discord_login(PurpleAccount *account)
+ {
+@@ -6446,17 +6502,8 @@ discord_login(PurpleAccount *account)
+ 		discord_start_socket(da);
+ 
+ 	} else if (account_password && *account_password) {
+-		JsonObject *data = json_object_new();
+-		gchar *str;
+-
+-		json_object_set_string_member(data, "login", purple_account_get_username(account));
+-		json_object_set_string_member(data, "password", account_password);
+-
+-		str = json_object_to_string(data);
+-		discord_fetch_url(da, "https://" DISCORD_API_SERVER "/api/" DISCORD_API_VERSION "/auth/login", str, discord_login_response, NULL);
+-
+-		g_free(str);
+-		json_object_unref(data);
++		/* Without a fingerprint Discord rejects every 2FA code (and may sign the account out everywhere) */
++		discord_fetch_url(da, "https://" DISCORD_API_SERVER "/api/" DISCORD_API_VERSION "/auth/fingerprint", "{}", discord_got_login_fingerprint, NULL);
+ 
+ 	} else {
+ #ifdef	USE_QRCODE_AUTH
+@@ -6553,6 +6600,10 @@ discord_close(PurpleConnection *pc)
+ 	da->frame = NULL;
+ 	g_free(da->token);
+ 	da->token = NULL;
++	g_free(da->fingerprint);
++	da->fingerprint = NULL;
++	g_free(da->mfa_ticket);
++	da->mfa_ticket = NULL;
+ 	g_free(da->session_id);
+ 	da->session_id = NULL;
+ 	g_free(da->self_username);
