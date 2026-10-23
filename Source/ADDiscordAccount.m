@@ -115,6 +115,12 @@ static BOOL looksLikeToken(NSString *string)
 {
 	[super configurePurpleAccount];
 
+	// purple-discord opens a server channel on every message in it when it considers the server
+	// small, judging by the members it has seen; right after login that is few for any server, so a
+	// busy server floods Adium with chat windows and history downloads until it freezes. Only open
+	// server channels when mentioned; direct and group messages still open as usual.
+	purple_account_set_int(account, "large-channel-count", 0);
+
 	NSString *token = nil;
 	if (looksLikeToken(password)) {
 		token = password;
