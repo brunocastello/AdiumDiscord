@@ -61,6 +61,10 @@ jobs:
           UNATTENDED=1 BUILD_FLAVOR=stable TARGET_DIR="$OSXCROSS" \
             ENABLE_ARCHS="i386 x86_64" OSX_VERSION_MIN=10.6 ./build.sh
 
+      - name: Put osxcross on PATH
+        # clang finds the cross ld64 through PATH; without it, it falls back to the Linux linker
+        run: echo "$OSXCROSS/bin" >> "$GITHUB_PATH"
+
       - name: Build plugin
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
