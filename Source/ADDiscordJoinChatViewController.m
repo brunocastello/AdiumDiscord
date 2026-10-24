@@ -44,6 +44,29 @@ static void addChannel(const gchar *guild_id, const gchar *guild_name,
 	                                              nil]];
 }
 
+// DiscordAdiumGroupDMFunc: collects group DMs into an array
+static void addGroupDM(const gchar *channel_id, const gchar *name, guint64 last_message_id, gpointer user_data)
+{
+	NSMutableArray *groupDMs = user_data;
+
+	[groupDMs addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+	                     stringOrFallback(channel_id, @""), @"id",
+	                     stringOrFallback(name, @"Group DM"), @"name",
+	                     [NSNumber numberWithUnsignedLongLong:last_message_id], @"lastMessageID",
+	                     nil]];
+}
+
+// Most recently active first; message IDs grow over time
+static NSComparisonResult compareGroupDMs(NSDictionary *a, NSDictionary *b, void *context)
+{
+	NSComparisonResult result = [[b objectForKey:@"lastMessageID"] compare:[a objectForKey:@"lastMessageID"]];
+
+	if (result == NSOrderedSame)
+		result = [[a objectForKey:@"name"] localizedCaseInsensitiveCompare:[b objectForKey:@"name"]];
+
+	return result;
+}
+
 // Discord's order: channels without a category first, then by category, then by position
 static NSComparisonResult compareChannels(NSDictionary *a, NSDictionary *b, void *context)
 {
@@ -80,7 +103,7 @@ static NSTextField *newLabel(NSString *title, NSRect frame)
 }
 
 @interface ADDiscordJoinChatViewController ()
-- (void)reloadWithServersByID:(NSDictionary *)serversByID;
+- (void)reloadWithServersByID:(NSDictionary *)serversByID groupDMs:(NSMutableArray *)groupDMs;
 - (void)serverChanged:(id)sender;
 - (void)channelChanged:(id)sender;
 - (void)validate;
@@ -105,9 +128,8 @@ static NSTextField *newLabel(NSString *title, NSRect frame)
 		[popUp_server setAction:@selector(serverChanged:)];
 		[view addSubview:popUp_server];
 
-		label = newLabel(@"Channel:", NSMakeRect(0, 42, 86, 17));
-		[view addSubview:label];
-		[label release];
+		label_channel = newLabel(@"Channel:", NSMakeRect(0, 42, 86, 17));
+		[view addSubview:label_channel];
 
 		popUp_channel = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(89, 36, 268, 26) pullsDown:NO];
 		[popUp_channel setTarget:self];
@@ -131,6 +153,7 @@ static NSTextField *newLabel(NSString *title, NSRect frame)
 {
 	[popUp_server release];
 	[popUp_channel release];
+	[label_channel release];
 	[textField_channelID release];
 	[servers release];
 
@@ -142,17 +165,21 @@ static NSTextField *newLabel(NSString *title, NSRect frame)
 	[super configureForAccount:inAccount];
 
 	NSMutableDictionary *serversByID = [NSMutableDictionary dictionary];
+	NSMutableArray *groupDMs = [NSMutableArray array];
 	PurpleAccount *purpleAccount = [(CBPurpleAccount *)inAccount purpleAccount];
 	PurpleConnection *pc = (purpleAccount ? purple_account_get_connection(purpleAccount) : NULL);
 
-	if (pc && PURPLE_CONNECTION_IS_CONNECTED(pc))
+	if (pc && PURPLE_CONNECTION_IS_CONNECTED(pc)) {
 		discord_adium_foreach_channel(pc, addChannel, serversByID);
+		discord_adium_foreach_group_dm(pc, addGroupDM, groupDMs);
+	}
 
-	[self reloadWithServersByID:serversByID];
+	[self reloadWithServersByID:serversByID groupDMs:groupDMs];
 }
 
 // serversByID: server ID -> { name, channels (NSMutableArray of channel dictionaries) }
-- (void)reloadWithServersByID:(NSDictionary *)serversByID
+// groupDMs: { id, name, lastMessageID }, listed under a "Group DMs" entry before the servers
+- (void)reloadWithServersByID:(NSDictionary *)serversByID groupDMs:(NSMutableArray *)groupDMs
 {
 	NSMutableArray *sortedServers = [NSMutableArray arrayWithArray:[serversByID allValues]];
 	[sortedServers sortUsingFunction:compareServers context:NULL];
@@ -163,13 +190,23 @@ static NSTextField *newLabel(NSString *title, NSRect frame)
 	servers = [sortedServers retain];
 
 	[popUp_server removeAllItems];
+	if ([groupDMs count]) {
+		[groupDMs sortUsingFunction:compareGroupDMs context:NULL];
+		[popUp_server addItemWithTitle:@"Group DMs"];
+		[[popUp_server lastItem] setRepresentedObject:[NSDictionary dictionaryWithObjectsAndKeys:
+		                                               groupDMs, @"channels",
+		                                               [NSNumber numberWithBool:YES], @"groupDMs",
+		                                               nil]];
+		if ([servers count])
+			[[popUp_server menu] addItem:[NSMenuItem separatorItem]];
+	}
 	for (NSDictionary *server in servers) {
 		[popUp_server addItemWithTitle:@""];
 		// Set the title separately so names that match an existing item are not merged
 		[[popUp_server lastItem] setTitle:[server objectForKey:@"name"]];
 		[[popUp_server lastItem] setRepresentedObject:server];
 	}
-	[popUp_server setEnabled:([servers count] > 0)];
+	[popUp_server setEnabled:([popUp_server numberOfItems] > 0)];
 
 	[self serverChanged:nil];
 }
@@ -177,6 +214,7 @@ static NSTextField *newLabel(NSString *title, NSRect frame)
 - (void)serverChanged:(id)sender
 {
 	NSDictionary *server = [[popUp_server selectedItem] representedObject];
+	BOOL isGroupDMs = [[server objectForKey:@"groupDMs"] boolValue];
 	NSMenu *menu = [[[NSMenu alloc] initWithTitle:@""] autorelease];
 	NSString *lastCategory = nil;
 	NSMenuItem *firstChannel = nil;
@@ -194,7 +232,8 @@ static NSTextField *newLabel(NSString *title, NSRect frame)
 		}
 		lastCategory = category;
 
-		item = [[[NSMenuItem alloc] initWithTitle:[@"#" stringByAppendingString:[channel objectForKey:@"name"]]
+		item = [[[NSMenuItem alloc] initWithTitle:(isGroupDMs ? [channel objectForKey:@"name"]
+		                                                      : [@"#" stringByAppendingString:[channel objectForKey:@"name"]])
 		                                   action:NULL
 		                            keyEquivalent:@""] autorelease];
 		[item setRepresentedObject:channel];
@@ -206,6 +245,7 @@ static NSTextField *newLabel(NSString *title, NSRect frame)
 			firstChannel = item;
 	}
 
+	[label_channel setStringValue:(isGroupDMs ? @"Group:" : @"Channel:")];
 	[popUp_channel setMenu:menu];
 	if (firstChannel)
 		[popUp_channel selectItem:firstChannel];
@@ -265,7 +305,7 @@ static NSTextField *newLabel(NSString *title, NSRect frame)
 		return;
 
 	/* The chat is named after the channel ID: purple-discord names the conversation that, and
-	 * the chat's title becomes "#channel (Server)" once it opens. */
+	 * the chat's title becomes "#channel (Server)" (or the group DM's name) once it opens. */
 	[self doJoinChatWithName:channelID
 	               onAccount:inAccount
 	        chatCreationInfo:[NSDictionary dictionaryWithObjectsAndKeys:

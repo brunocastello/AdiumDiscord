@@ -42,6 +42,9 @@ your own risk.
   of its channels. You can also paste a channel link (right-click a channel in Discord → Copy
   Link) or a channel ID. Channel windows are titled "#channel (Server)".
 - Server channels also open by themselves when you are @mentioned in them.
+- Group DMs: they open when someone writes in them, and are listed under **Group DMs** at the top
+  of the server menu in **File → Join Group Chat…** (newest activity first). Not yet tested on a
+  real group DM; reports welcome.
 - Not yet: voice/video, QR-code login, security-key (WebAuthn) or SMS two-factor login.
 
 ## Building

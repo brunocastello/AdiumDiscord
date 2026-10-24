@@ -8,11 +8,12 @@
 
 #import <Adium/DCJoinChatViewController.h>
 
-// The Discord panel of File > Join Group Chat: pick a server and one of its channels, or paste a
-// channel ID. Built in code, since CI cannot compile nibs.
+// The Discord panel of File > Join Group Chat: pick a server and one of its channels (or one of
+// the group DMs), or paste a channel ID. Built in code, since CI cannot compile nibs.
 @interface ADDiscordJoinChatViewController : DCJoinChatViewController <NSTextFieldDelegate> {
 	NSPopUpButton	*popUp_server;
 	NSPopUpButton	*popUp_channel;
+	NSTextField		*label_channel;
 	NSTextField		*textField_channelID;
 
 	NSArray			*servers;	// of NSDictionary: name, channels (sorted)

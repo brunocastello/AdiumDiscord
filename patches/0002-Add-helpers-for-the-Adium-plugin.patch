@@ -6,13 +6,14 @@ DiscordAccount struct:
 
 - discord_adium_foreach_channel() lists the text and announcement channels
   the user can read on every server, with their categories and positions.
+- discord_adium_foreach_group_dm() lists the user's group DMs.
 - discord_adium_get_channel_title() gives "#channel (Server)".
 
 diff --git a/libdiscord.c b/libdiscord.c
 index 161b068..a49375b 100644
 --- a/libdiscord.c
 +++ b/libdiscord.c
-@@ -11581,3 +11581,80 @@ plugin_query(GError **error)
+@@ -11581,3 +11581,105 @@
  PURPLE_PLUGIN_INIT(discord, plugin_query, libpurple3_plugin_load, libpurple3_plugin_unload);
  
  #endif
@@ -92,4 +93,29 @@ index 161b068..a49375b 100644
 +	}
 +
 +	return g_strdup_printf("#%s (%s)", channel->name, guild->name);
++}
++
++typedef void (*DiscordAdiumGroupDMFunc)(const gchar *channel_id, const gchar *name,
++                                        guint64 last_message_id, gpointer user_data);
++
++/* Calls func for every group DM the user is in */
++void
++discord_adium_foreach_group_dm(PurpleConnection *pc, DiscordAdiumGroupDMFunc func, gpointer user_data)
++{
++	DiscordAccount *da = purple_connection_get_protocol_data(pc);
++	GHashTableIter iter;
++	gpointer key, value;
++
++	if (da == NULL || da->group_dms == NULL) {
++		return;
++	}
++
++	g_hash_table_iter_init(&iter, da->group_dms);
++	while (g_hash_table_iter_next(&iter, &key, &value)) {
++		DiscordChannel *channel = value;
++		gchar *channel_id = from_int(channel->id);
++
++		func(channel_id, channel->name, channel->last_message_id, user_data);
++		g_free(channel_id);
++	}
 +}
