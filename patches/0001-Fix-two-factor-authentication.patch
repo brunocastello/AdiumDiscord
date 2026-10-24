@@ -19,10 +19,11 @@ Discord Lite made in dosdude1/discord-lite@fde55a8.
   backup code instead of silently rejecting authenticator codes.
 - Report Discord's own error message (eg. "Invalid two-factor code") instead
   of "Bad username/password".
+- Redact the 2FA request bodies (code and ticket) in the debug log.
 - Free fingerprint, mfa_ticket and login_instance_id on close.
 
 diff --git a/libdiscord.c b/libdiscord.c
-index 31fc76c..9167d3d 100644
+index 31fc76c..8da1e4f 100644
 --- a/libdiscord.c
 +++ b/libdiscord.c
 @@ -393,6 +393,8 @@ typedef struct {
@@ -34,7 +35,7 @@ index 31fc76c..9167d3d 100644
  	gchar *ack_token;
  
  	PurpleSslConnection *websocket;
-@@ -1706,6 +1708,10 @@ discord_fetch_url_with_method_len(DiscordAccount *ya, const gchar *method, const
+@@ -1706,11 +1708,18 @@ discord_fetch_url_with_method_len(DiscordAccount *ya, const gchar *method, const
  
  	if (ya->token) {
  		purple_http_request_header_set(request, "Authorization", ya->token);
@@ -45,7 +46,15 @@ index 31fc76c..9167d3d 100644
  	}
  
  	if (postdata) {
-@@ -6286,15 +6292,35 @@ discord_mfa_text_entry(gpointer user_data, const gchar *code)
+ 		if (strstr(url, "/login") && strstr(postdata, "password")) {
+ 			purple_debug_info("discord", "With postdata ###PASSWORD REMOVED###\n");
++		} else if (strstr(url, "/auth/mfa/")) {
++			/* The 2FA code (or backup code) and the login ticket */
++			purple_debug_info("discord", "With postdata ###2FA CODE REMOVED###\n");
+ 		} else {
+ 			purple_debug_info("discord", "With postdata %s\n", postdata);
+ 		}
+@@ -6286,15 +6295,35 @@ discord_mfa_text_entry(gpointer user_data, const gchar *code)
  {
  	DiscordAccount *da = user_data;
  	JsonObject *data = json_object_new();
@@ -84,7 +93,7 @@ index 31fc76c..9167d3d 100644
  	json_object_unref(data);
  
  	g_free(da->mfa_ticket);
-@@ -6326,14 +6352,31 @@ discord_login_response(DiscordAccount *da, JsonNode *node, gpointer user_data)
+@@ -6326,14 +6355,31 @@ discord_login_response(DiscordAccount *da, JsonNode *node, gpointer user_data)
  		}
  
  		if (json_object_get_boolean_member(response, "mfa")) {
@@ -117,7 +126,7 @@ index 31fc76c..9167d3d 100644
  				NULL, FALSE, FALSE, "",
  				_("_Login"), G_CALLBACK(discord_mfa_text_entry),
  				_("_Cancel"), G_CALLBACK(discord_mfa_cancel),
-@@ -6377,11 +6420,71 @@ discord_login_response(DiscordAccount *da, JsonNode *node, gpointer user_data)
+@@ -6377,11 +6423,71 @@ discord_login_response(DiscordAccount *da, JsonNode *node, gpointer user_data)
  				}
  			}
  		}
@@ -189,7 +198,7 @@ index 31fc76c..9167d3d 100644
  void
  discord_login(PurpleAccount *account)
  {
-@@ -6446,17 +6549,10 @@ discord_login(PurpleAccount *account)
+@@ -6446,17 +6552,10 @@ discord_login(PurpleAccount *account)
  		discord_start_socket(da);
  
  	} else if (account_password && *account_password) {
@@ -211,7 +220,7 @@ index 31fc76c..9167d3d 100644
  
  	} else {
  #ifdef	USE_QRCODE_AUTH
-@@ -6553,6 +6649,12 @@ discord_close(PurpleConnection *pc)
+@@ -6553,6 +6652,12 @@ discord_close(PurpleConnection *pc)
  	da->frame = NULL;
  	g_free(da->token);
  	da->token = NULL;
