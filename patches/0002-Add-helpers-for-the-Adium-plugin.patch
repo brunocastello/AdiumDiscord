@@ -19,7 +19,7 @@ index 161b068..a49375b 100644
  #endif
 +
 +/*
-+ * Helpers for the Adium plugin (AdiumDiscord), which has no access to DiscordAccount.
++ * Helpers for the Adium plugin (adium-discord), which has no access to DiscordAccount.
 + */
 +
 +typedef void (*DiscordAdiumChannelFunc)(const gchar *guild_id, const gchar *guild_name,

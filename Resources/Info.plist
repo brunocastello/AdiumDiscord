@@ -9,7 +9,7 @@
 	<key>CFBundleExecutable</key>
 	<string>Discord</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.github.brunocastello.AdiumDiscord</string>
+	<string>com.github.brunocastello.adium-discord</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
